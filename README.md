@@ -5,6 +5,8 @@ This project is an end-to-end NLP pipeline designed to perform stylistic text tr
 
 By utilizing a local, fine-tuned LoRA (Low-Rank Adaptation) adapter, this tool functions entirely offline during inference, ensuring complete data privacy for unpublished thesis drafts and academic research.
 
+*Note: This project deliberately utilizes QLoRA fine-tuning rather than RAG. While RAG is optimal for factual retrieval, it cannot fundamentally alter the statistical burstiness or perplexity of the generator's prose. Fine-tuning was required to securely capture the domain-specific stylometry.*
+
 ## Architecture & Workflow
 The project is divided into three distinct phases:
 
