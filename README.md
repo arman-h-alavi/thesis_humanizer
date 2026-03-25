@@ -39,5 +39,14 @@ To bypass this hardware mismatch without relying on incredibly slow software emu
 2. The model loader forces `torch.float16`.
 3. The LoRA adapter is trained in standard 32-bit math, which fits comfortably within the T4's VRAM memory ceiling while maintaining fast iteration speeds.
 
+### Phase 4: Instruct Architecture & Kaggle Migration
+* **The Pivot:** Migrated from the `Meta-Llama-3-8B` base model to the `Instruct` variant to eliminate prompt hallucinations and enforce `<|eot_id|>` stop tokens via native Chat Templates.
+* **Hardware Upgrade:** Moved the pipeline to Kaggle using Dual T4 GPUs (32GB VRAM). This overhead allowed us to reverse the lossy 4-bit compression and run **8-bit inference**, preserving the complex reasoning pathways required for applied statistics.
+* **The Alignment Tax (Limitation):** Despite aggressive system prompting, the Instruct model's native RLHF alignment (which favors verbose "AI-speak") actively fought the custom LoRA stylometry. It also exhibited a strong bias toward summarizing multi-paragraph inputs.
+
+### Phase 5: Synthetic Paired Data (Current Pipeline)
+To completely overwrite the base model's RLHF bias, the pipeline shifted from unpaired text ingestion to supervised translation mapping.
+* **Data Generation:** A Python script was used to convert the source papers into a synthetic `[Robotic AI Draft] -> [Human Academic Target]` dataset.
+* **Objective:** Retrain the LoRA adapter to explicitly learn the mathematical function of stripping AI filler and outputting dry, human-written statistics and data science prose.
 ## Usage
 *(Add your instructions here for running the extraction, preparation, and inference scripts once we finalize them).*
