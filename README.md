@@ -1,52 +1,70 @@
-# Academic Style-Transfer Pipeline (Llama-3 QLoRA)
+# Academic Humanizer Pipeline (Llama-3 QLoRA)
+
+[![Framework: PyTorch](https://img.shields.io/badge/Framework-PyTorch-ee4c2c.svg)](https://pytorch.org/)
+[![Library: Hugging Face](https://img.shields.io/badge/Hugging%20Face-Transformers%20%7C%20PEFT%20%7C%20TRL-F9D371.svg)](https://huggingface.co/)
+[![UI: Gradio](https://img.shields.io/badge/UI-Gradio-ff7c00.svg)](https://gradio.app/)
+[![Environment: Kaggle](https://img.shields.io/badge/Compute-Kaggle%20T4x2-20BEFF.svg)](https://www.kaggle.com/)
 
 ## Overview
-This project is an end-to-end NLP pipeline designed to perform stylistic text transformation. It fine-tunes a foundational Large Language Model (Meta-Llama-3-8B) to translate standard drafted text into highly formal, domain-specific academic prose. The model's target statistical distribution is tuned on peer-reviewed literature focusing on applied statistics, historical price data analysis, and metadata formatting.
+This project is an end-to-end NLP pipeline designed to perform stylistic text transformation. It fine-tunes a foundational Large Language Model (**Meta-Llama-3-8B-Instruct**) to translate flowery, AI-generated drafts into highly formal, domain-specific academic prose. The target statistical distribution is tuned on peer-reviewed literature focusing on applied statistics, data science, and financial modeling.
 
-By utilizing a local, fine-tuned LoRA (Low-Rank Adaptation) adapter, this tool functions entirely offline during inference, ensuring complete data privacy for unpublished thesis drafts and academic research.
+By utilizing a fine-tuned LoRA (Low-Rank Adaptation) adapter, this tool can be deployed via isolated cloud notebooks or self-hosted environments, functioning as a secure, high-privacy editing engine for sensitive or proprietary academic research.
 
-*Note: This project deliberately utilizes QLoRA fine-tuning rather than RAG. While RAG is optimal for factual retrieval, it cannot fundamentally alter the statistical burstiness or perplexity of the generator's prose. Fine-tuning was required to securely capture the domain-specific stylometry.*
+*Note: This project deliberately utilizes **Supervised Fine-Tuning (SFT) via QLoRA** rather than RAG. While RAG is optimal for factual retrieval, it cannot fundamentally alter the statistical burstiness, perplexity, or stylometry of the generator's prose. Fine-tuning was required to securely capture the domain-specific tone.*
 
-## Architecture & Workflow
-The project is divided into three distinct phases:
+---
+
+## The Tech Stack
+* **Data Extraction:** Docker, Grobid API
+* **Deep Learning Framework:** PyTorch
+* **LLM Tooling:** Hugging Face (`transformers`, `peft`, `trl`, `datasets`, `bitsandbytes`)
+* **Inference UI:** Gradio
+* **Compute Environment:** Kaggle (Dual NVIDIA T4 GPUs)
+
+---
+
+## Architecture & Engineering Workflow
+
+*(Note: Earlier experimental iterations of this pipeline—including standard causal language modeling on unpaired text—have been moved to the `/Archived` directory for historical reference. The current pipeline utilizes a highly optimized supervised translation mapping approach).*
 
 ### Phase 1: Data Extraction (Docker & Grobid)
-* **Objective:** Extract pure narrative prose from complex academic PDFs while filtering out headers, footers, and reference lists.
-* **Tooling:** A local `Grobid` machine learning server containerized via Docker.
-* **Process:** PDFs are sent via a Python API to the Grobid server, which parses the documents layout-by-layout and returns structured XML (TEI) containing only the abstract and body paragraphs.
+* **Objective:** Extract pure narrative prose from complex academic PDFs while strictly filtering out headers, footers, charts, and reference lists.
+* **Process:** PDFs are sent via a Python API to a local `Grobid` machine learning server running inside a Docker container. Grobid parses the layout and returns structured XML (TEI) containing only the abstract and body paragraphs.
 
-### Phase 2: Dataset Preparation (Sliding Window Chunking)
-* **Objective:** Format the raw text into a deep-learning-compatible format without destroying the micro-flow of the academic transitions.
-* **Process:** The raw text is tokenized and divided into overlapping chunks (1500 characters with a 200-character overlap) to preserve contextual chain-links. The output is formatted as a `.jsonl` file perfectly optimized for Hugging Face's `datasets` library.
+### Phase 2: Synthetic Paired Dataset Generation
+* **The Problem:** The Llama-3 Instruct model possesses a heavy RLHF "Alignment Tax"—a strong bias toward verbose, conversational "AI-speak" that actively fights custom stylometry.
+* **The Solution:** To overwrite this bias, the pipeline utilized a reverse-translation mapping approach. Pure, human-written academic texts were fed into the base LLM to deliberately generate flowery, robotic "AI equivalents." These pairs were then flipped to create a synthetic `[AI-Generated Draft] -> [Human Academic Target]` dataset. This generated ~2,800 perfect training pairs (saved as JSONL), establishing a clear mathematical mapping for stripping AI filler.
 
 ### Phase 3: Deep Learning & Fine-Tuning (QLoRA)
-* **Objective:** Shift the base Llama-3 model's weights toward the target academic style using a highly constrained hardware environment (NVIDIA T4 GPU, 16GB VRAM).
-* **Technique:** * The base model is compressed to 4-bit precision (`nf4`) using `BitsAndBytes`.
-  * A LoRA adapter (Rank=16) is attached to the attention modules (`q_proj`, `k_proj`, `v_proj`, `o_proj`).
-  * The model is trained via Causal Language Modeling (Next-Token Prediction) using the `trl` library's `SFTTrainer`.
+* **Objective:** Shift the base Llama-3 weights toward the target academic style using a highly constrained hardware environment (Kaggle NVIDIA T4 GPU, 16GB VRAM).
+* **Technique:**
+  * The base model is compressed to **4-bit precision (`nf4`)** using `BitsAndBytes`.
+  * A **LoRA adapter (Rank=16, Alpha=32)** is attached to the attention modules (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`).
+  * The model is trained via the `trl` library's `SFTTrainer` (Supervised Fine-Tuning) using exact Chat Template matching.
 
-## Hardware Constraints & Troubleshooting
+> **Hardware Troubleshooting:** Llama-3 natively utilizes the `bfloat16` data type. However, free-tier cloud environments (T4 GPUs) physically lack the silicon pathways to compute `bfloat16` gradients natively, resulting in PyTorch AMP GradScaler crashes. To bypass this hardware mismatch without relying on slow software emulation, the `SFTConfig` in this pipeline forces `fp16=False` and `bf16=False`, training the adapter in standard 32-bit math to maintain fast iteration speeds.
 
-**NVIDIA T4 GPU vs. BFloat16 Architecture**
-Llama-3 natively utilizes the `bfloat16` data type. However, free-tier cloud environments often rely on older NVIDIA Turing architectures (like the T4 GPU), which physically lack the silicon pathways to compute `bfloat16` gradients natively. 
+### Phase 4: Inference, Gradio UI, & Defeating AI Detectors
+* **Deployment:** The final 100MB LoRA adapter is loaded natively over the 8-Billion parameter Meta base model using `PeftModel`. A custom **Gradio Web UI** was built to provide a seamless, side-by-side editing interface.
+* **Algorithmic Evasion (Burstiness & Perplexity):** Detectors like Turnitin and GPTZero flag text based on low *burstiness* (sentence length variation) and low *perplexity* (word predictability). Academic writing inherently possesses both, causing frequent false positives. 
+* To ensure the generated output passes detection, the inference engine relies on aggressive, custom hyperparameter tuning:
+  * `temperature=0.75` and `top_p=0.90` (Nucleus Sampling) to inject controlled mathematical unpredictability.
+  * `repetition_penalty=1.12` to prevent repetitive phrasing.
+  * Explicit System Prompting to force high burstiness (mixing punchy sentences with complex clauses) while strictly forbidding hallucinated headers or transitions.
 
-Attempting to train Llama-3 with standard Hugging Face configurations on a T4 results in a PyTorch AMP GradScaler crash:
-`NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'`
+---
 
-**The Implemented Fix:**
-To bypass this hardware mismatch without relying on incredibly slow software emulation, this pipeline's training script forces a total environment override:
-1. `fp16=False` and `bf16=False` in the `SFTConfig` to completely disable the buggy Automatic Mixed Precision (AMP) GradScaler.
-2. The model loader forces `torch.float16`.
-3. The LoRA adapter is trained in standard 32-bit math, which fits comfortably within the T4's VRAM memory ceiling while maintaining fast iteration speeds.
-
-### Phase 4: Instruct Architecture & Kaggle Migration
-* **The Pivot:** Migrated from the `Meta-Llama-3-8B` base model to the `Instruct` variant to eliminate prompt hallucinations and enforce `<|eot_id|>` stop tokens via native Chat Templates.
-* **Hardware Upgrade:** Moved the pipeline to Kaggle using Dual T4 GPUs (32GB VRAM). This overhead allowed us to reverse the lossy 4-bit compression and run **8-bit inference**, preserving the complex reasoning pathways required for applied statistics.
-* **The Alignment Tax (Limitation):** Despite aggressive system prompting, the Instruct model's native RLHF alignment (which favors verbose "AI-speak") actively fought the custom LoRA stylometry. It also exhibited a strong bias toward summarizing multi-paragraph inputs.
-
-### Phase 5: Synthetic Paired Data (Current Pipeline)
-To completely overwrite the base model's RLHF bias, the pipeline shifted from unpaired text ingestion to supervised translation mapping.
-* **Data Generation:** A Python script was used to convert the source papers into a synthetic `[Robotic AI Draft] -> [Human Academic Target]` dataset.
-* **Objective:** Retrain the LoRA adapter to explicitly learn the mathematical function of stripping AI filler and outputting dry, human-written statistics and data science prose.
 ## Usage
-*(Add your instructions here for running the extraction, preparation, and inference scripts once we finalize them).*
+
+### 1. Model Registry
+The trained LoRA adapter weights are hosted privately and can be attached to cloud environments or downloaded for local GGUF conversion.
+
+### 2. Running the Inference UI (Kaggle)
+To utilize the editor without requiring local GPU hardware:
+1. Open the Kaggle Inference Notebook.
+2. Ensure the environment is set to **GPU T4x2** with Internet enabled.
+3. Run all cells to initialize the base model, attach the LoRA adapter, and launch the Gradio server.
+4. Click the generated `gradio.live` link to open the full-screen Academic Style-Transfer Interface.
+5. Paste your drafted text and click "Humanize Text". 
+
+*(For maximum AI detection evasion, it is recommended to apply a 20% manual human pass to the final output to further disrupt the mathematical burstiness pattern).*
